@@ -3,67 +3,32 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
-use App\Models\Transaction;
-use App\Helpers\TransactionHelper;
-use Illuminate\Support\Facades\DB;
+use App\Services\WithdrawalService;
+use Illuminate\Validation\ValidationException;
 
 class WithdrawalController extends Controller
 {
-     public function withdraw(Request $request)
+    protected WithdrawalService $withdrawalService;
+
+    public function __construct(WithdrawalService $withdrawalService)
     {
-        $user = $request->user();
+        $this->withdrawalService = $withdrawalService;
+    }
 
-        if (!$user->kyc || $user->kyc->status !== 'approved') {
-            return response()->json([
-                'message' => 'KYC not verified. You cannot withdraw funds.'
-            ], 403);
-        }
-
+   public function withdraw(Request $request)
+    {
         $request->validate([
             'amount' => 'required|numeric|min:1',
-            'pin'    => 'required|digits:4'
+            'pin'    => 'required|digits:4',
         ]);
 
-        if (!$user->transaction_pin || !Hash::check($request->pin, $user->transaction_pin)) {
-            return response()->json([
-                'message' => 'Invalid transaction PIN'
-            ], 403);
-        }
+        $user = $request->user();
+        $result = $this->withdrawalService->withdraw($user, $request->amount, $request->pin);
 
-        $account = $user->account;
-        $amount = $request->amount;
-
-        if ($account->balance < $amount) {
-            return response()->json([
-                'message' => 'Insufficient balance'
-            ], 400);
-        }
-
-        $reference = TransactionHelper::generateReference();
-
-        DB::transaction(function () use ($account, $amount, &$transaction, $reference) {
-            $account->decrement('balance', $amount);
-            $account->refresh();
-
-            $transaction = Transaction::create([
-                'reference' => $reference,
-                'sender_account_id' => $account->id,
-                'receiver_account_id' => null,
-                'amount' => $amount,
-                'type' => 'debit',
-                'status' => 'success'
-            ]);
-        });
-
-        return response()->json([
-            'message' => 'Withdrawal successful',
-            'transaction' => [
-                'reference' => $transaction->reference,
-                'amount' => $transaction->amount,
-                'balance_after' => $account->balance,
-                'created_at' => $transaction->created_at
-            ]
-        ], 201);
+        return response()->json(
+            $result,
+            $result['status']
+        );
     }
+
 }
